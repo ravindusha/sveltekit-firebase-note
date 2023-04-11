@@ -296,5 +296,3 @@
 		</div>
 	</div>
 {/if}
-
-<!-- <pre>{JSON.stringify($authStore?.user, null, 2)}</pre> -->
