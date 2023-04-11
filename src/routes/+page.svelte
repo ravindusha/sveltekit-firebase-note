@@ -1,37 +1,70 @@
 <script lang="ts">
 	import { firebaseConfig } from '$lib/firebase';
-	import { authStore } from '$lib/store/store';
+	import { authStore, notesStore, type NoteDocument } from '$lib/store/store';
 	import { initializeApp } from 'firebase/app';
 	import {
 		GoogleAuthProvider,
 		getAuth,
-		type Auth,
 		signInWithPopup,
+		type Auth,
 		type Unsubscribe
 	} from 'firebase/auth';
+	import {
+		DocumentReference,
+		Firestore,
+		addDoc,
+		collection,
+		deleteDoc,
+		getDocs,
+		getFirestore
+	} from 'firebase/firestore';
 	import { onDestroy, onMount } from 'svelte';
 
 	let auth: Auth;
 	let unsubscribe: Unsubscribe;
+	let db: Firestore;
 
-	onMount(() => {
+	type Note = {
+		title: string;
+		note: string;
+	};
+
+	onMount(async () => {
 		const app = initializeApp(firebaseConfig);
 		auth = getAuth(app);
+		db = getFirestore(app);
 
 		unsubscribe = auth.onAuthStateChanged(async (user) => {
 			authStore.set({
 				user
 			});
 		});
+
+		fetchAndUpdateData();
 	});
 
 	onDestroy(() => {
 		if (unsubscribe) {
-			console.log('unsub');
-
 			unsubscribe();
 		}
 	});
+
+	const fetchAndUpdateData = async () => {
+		let notes: NoteDocument[] = [];
+
+		try {
+			const querySnapshot = await getDocs(collection(db, 'notes'));
+			querySnapshot.forEach((doc) => {
+				notes.push({
+					...(doc.data() as Note),
+					ref: doc.ref
+				});
+			});
+		} catch (e) {
+			//
+		}
+		notesStore.set(notes);
+	};
 
 	const provider = new GoogleAuthProvider();
 
@@ -66,17 +99,202 @@
 
 	const handleSignOut = async () => {
 		await auth.signOut();
+		notesStore.set([]);
 	};
+
+	const handleFormSubmit = async (event: SubmitEvent) => {
+		const formData = new FormData(event.target as HTMLFormElement);
+		const data = Object.fromEntries(formData);
+		if (!data.title || !data.note) return;
+		try {
+			await saveNote(data as Note);
+			(event.target as HTMLFormElement).reset();
+			fetchAndUpdateData();
+		} catch (e) {
+			//
+		}
+	};
+
+	const saveNote = async (noteData: Note) => {
+		try {
+			const docRef = await addDoc(collection(db, 'notes'), {
+				...noteData
+			});
+			console.log('Document written with ID: ', docRef.id);
+			showToastMessage('Note saved');
+			return;
+		} catch (e) {
+			console.error('Error adding document: ', e);
+			throw e;
+		}
+	};
+
+	let toastMessage = '';
+	let showToast = false;
+	let toastMessageDuration = 2000;
+
+	const showToastMessage = (message: string) => {
+		toastMessage = message;
+		showToast = true;
+		hideToastMessage(toastMessageDuration);
+	};
+
+	const hideToastMessage = (duration: number) => {
+		setTimeout(() => {
+			showToast = false;
+			toastMessage = '';
+		}, duration);
+	};
+
+	const removeNote = async (documentRef: DocumentReference) => {
+		await deleteDoc(documentRef);
+		showToastMessage('Note deleted');
+		fetchAndUpdateData();
+	};
+
+	authStore.subscribe((data) => {
+		data.user && fetchAndUpdateData();
+	});
 </script>
 
-<h1>Hi there</h1>
-{#if $authStore?.user}
-	<button on:click={handleSignOut}>Sign Out</button>
+<div class="navbar bg-base-100 shadow-md">
+	<div class="flex-1">
+		<a class="btn btn-ghost normal-case text-xl">Take Notes</a>
+	</div>
+	<div class="nav-end gap-2">
+		{#if $authStore?.user}
+			<div class="avatar">
+				<div class="w-10 rounded-full">
+					<img src={$authStore.user?.photoURL} referrerpolicy="no-referrer" />
+				</div>
+			</div>
+			<button class="btn gap-2" on:click={handleSignOut}>
+				<svg
+					xmlns="http://www.w3.org/2000/svg"
+					fill="none"
+					viewBox="0 0 24 24"
+					stroke-width="1.5"
+					stroke="currentColor"
+					class="w-6 h-6"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9"
+					/>
+				</svg>
+				Sign Out
+			</button>
+		{:else}
+			<button class="btn gap-2" on:click={handleAuth}>
+				<svg
+					xmlns="http://www.w3.org/2000/svg"
+					fill="none"
+					viewBox="0 0 24 24"
+					stroke-width="1.5"
+					stroke="currentColor"
+					class="w-6 h-6"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75"
+					/>
+				</svg>
+				Sign In
+			</button>
+		{/if}
+	</div>
+</div>
+{#if $authStore.user}
+	<div class="w-full flex flex-col mx-auto">
+		<form on:submit|preventDefault={handleFormSubmit}>
+			<div class="flex flex-col items-center justify-center">
+				<div class="form-control w-full max-w-lg">
+					<label class="label" for="title">
+						<span class="label-text">Title</span>
+					</label>
+					<input
+						type="text"
+						name="title"
+						placeholder="type here..."
+						class="input input-bordered w-full max-w-lg"
+					/>
+				</div>
+				<div class="form-control w-full max-w-lg">
+					<label class="label" for="note">
+						<span class="label-text">Note</span>
+					</label>
+					<textarea
+						name="note"
+						class="textarea textarea-bordered h-24"
+						placeholder="type here..."
+					/>
+				</div>
+				<div class="w-full flex justify-end max-w-lg p-2">
+					<button class="btn btn-active btn-accent px-10">Save</button>
+				</div>
+			</div>
+		</form>
+	</div>
 {:else}
-	<button on:click={handleAuth}>Sign in</button>
+	<div class="w-full flex justify-center m-10">
+		<h2 class="text-xl font-bold">Please Sign in to access notes</h2>
+	</div>
 {/if}
-{#if $authStore?.user}
-	<h2>Welcome {$authStore.user.displayName}</h2>
+<div class="w-auto flex-1 flex flex-wrap overflow-y-auto p-5 gap-5 bg-base-200">
+	{#each $notesStore as note}
+		<div class="card w-96 bg-base-300 shadow-none">
+			<div class="card-body">
+				<div class="card-actions justify-end -mt-5 -mr-5">
+					<button class="btn btn-square btn-ghost btn-sm">
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke-width="1.5"
+							stroke="currentColor"
+							class="w-5 h-5"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"
+							/>
+						</svg>
+					</button>
+					<button class="btn btn-square btn-ghost btn-sm" on:click={() => removeNote(note.ref)}>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							fill="none"
+							viewBox="0 0 24 24"
+							stroke-width="1.5"
+							stroke="currentColor"
+							class="w-5 h-5"
+						>
+							<path
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+							/>
+						</svg>
+					</button>
+				</div>
+				<h2 class="card-title">{note.title}</h2>
+				<p>{note.note}</p>
+			</div>
+		</div>
+	{/each}
+</div>
+
+{#if showToast}
+	<div class="toast toast-end">
+		<div class="alert alert-success">
+			<div>
+				<span>{toastMessage}</span>
+			</div>
+		</div>
+	</div>
 {/if}
 
-<pre>{JSON.stringify($authStore?.user, null, 2)}</pre>
+<!-- <pre>{JSON.stringify($authStore?.user, null, 2)}</pre> -->
