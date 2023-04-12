@@ -9,6 +9,7 @@ export type auth = {
 export type NoteDocument = {
     title: string;
     note: string;
+    authorId: string
     ref: DocumentReference;
 };
 

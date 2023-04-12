@@ -16,7 +16,10 @@
 		collection,
 		deleteDoc,
 		getDocs,
-		getFirestore
+		getFirestore,
+		query,
+		updateDoc,
+		where
 	} from 'firebase/firestore';
 	import { onDestroy, onMount } from 'svelte';
 
@@ -24,9 +27,16 @@
 	let unsubscribe: Unsubscribe;
 	let db: Firestore;
 
+	let isEditMode = false;
+	let editingDocRef: DocumentReference | null = null;
+
+	let titleText = '';
+	let noteText = '';
+
 	type Note = {
 		title: string;
 		note: string;
+		authorId: string;
 	};
 
 	onMount(async () => {
@@ -50,10 +60,16 @@
 	});
 
 	const fetchAndUpdateData = async () => {
+		if (!auth || !db) return;
+
 		let notes: NoteDocument[] = [];
 
 		try {
-			const querySnapshot = await getDocs(collection(db, 'notes'));
+			const q = query(
+				collection(db, 'notes'),
+				where('authorId', '==', auth.currentUser?.uid || '')
+			);
+			const querySnapshot = await getDocs(q);
 			querySnapshot.forEach((doc) => {
 				notes.push({
 					...(doc.data() as Note),
@@ -61,7 +77,7 @@
 				});
 			});
 		} catch (e) {
-			//
+			console.error(e);
 		}
 		notesStore.set(notes);
 	};
@@ -105,26 +121,51 @@
 	const handleFormSubmit = async (event: SubmitEvent) => {
 		const formData = new FormData(event.target as HTMLFormElement);
 		const data = Object.fromEntries(formData);
+
 		if (!data.title || !data.note) return;
-		try {
-			await saveNote(data as Note);
+
+		const noteToBeSaved = {
+			...(data as Note),
+			authorId: $authStore.user?.uid || ''
+		};
+
+		if (isEditMode && editingDocRef) {
+			await updateNote(noteToBeSaved, editingDocRef);
 			(event.target as HTMLFormElement).reset();
-			fetchAndUpdateData();
-		} catch (e) {
-			//
+		} else {
+			try {
+				await saveNote(noteToBeSaved);
+				(event.target as HTMLFormElement).reset();
+				fetchAndUpdateData();
+			} catch (e) {
+				//
+			}
 		}
 	};
 
 	const saveNote = async (noteData: Note) => {
 		try {
-			const docRef = await addDoc(collection(db, 'notes'), {
+			await addDoc(collection(db, 'notes'), {
 				...noteData
 			});
-			console.log('Document written with ID: ', docRef.id);
 			showToastMessage('Note saved');
 			return;
 		} catch (e) {
 			console.error('Error adding document: ', e);
+			throw e;
+		}
+	};
+	const updateNote = async (noteData: Note, docRef: DocumentReference) => {
+		if (!docRef) return;
+		try {
+			await updateDoc(docRef, {
+				...noteData
+			});
+			showToastMessage('Note updated');
+			handleNoteUpdateSuccess();
+			return;
+		} catch (e) {
+			console.error('Error updating document: ', e);
 			throw e;
 		}
 	};
@@ -155,6 +196,26 @@
 	authStore.subscribe((data) => {
 		data.user && fetchAndUpdateData();
 	});
+
+	const handleEditNote = (doc: NoteDocument) => {
+		isEditMode = true;
+		editingDocRef = doc.ref;
+		titleText = doc.title;
+		noteText = doc.note;
+	};
+
+	const handleEditCancel = () => {
+		isEditMode = false;
+		editingDocRef = null;
+		noteText = '';
+		titleText = '';
+	};
+
+	const handleNoteUpdateSuccess = () => {
+		isEditMode = false;
+		editingDocRef = null;
+		fetchAndUpdateData();
+	};
 </script>
 
 <div class="navbar bg-base-100 shadow-md">
@@ -163,9 +224,11 @@
 	</div>
 	<div class="nav-end gap-2">
 		{#if $authStore?.user}
-			<div class="avatar">
-				<div class="w-10 rounded-full">
-					<img src={$authStore.user?.photoURL} referrerpolicy="no-referrer" />
+			<div class="tooltip tooltip-bottom" data-tip={$authStore.user.displayName || ''}>
+				<div class="avatar">
+					<div class="w-10 rounded-full">
+						<img src={$authStore.user?.photoURL} referrerpolicy="no-referrer" alt="avatar" />
+					</div>
 				</div>
 			</div>
 			<button class="btn gap-2" on:click={handleSignOut}>
@@ -207,7 +270,7 @@
 	</div>
 </div>
 {#if $authStore.user}
-	<div class="w-full flex flex-col mx-auto">
+	<div class="w-full flex flex-col mx-auto pb-2">
 		<form on:submit|preventDefault={handleFormSubmit}>
 			<div class="flex flex-col items-center justify-center">
 				<div class="form-control w-full max-w-lg">
@@ -219,6 +282,7 @@
 						name="title"
 						placeholder="type here..."
 						class="input input-bordered w-full max-w-lg"
+						bind:value={titleText}
 					/>
 				</div>
 				<div class="form-control w-full max-w-lg">
@@ -229,9 +293,13 @@
 						name="note"
 						class="textarea textarea-bordered h-24"
 						placeholder="type here..."
+						bind:value={noteText}
 					/>
 				</div>
-				<div class="w-full flex justify-end max-w-lg p-2">
+				<div class="w-full flex justify-end max-w-lg p-2 gap-2">
+					<button class="btn btn-active btn-ghost px-10" type="button" on:click={handleEditCancel}
+						>Cancel</button
+					>
 					<button class="btn btn-active btn-accent px-10">Save</button>
 				</div>
 			</div>
@@ -247,7 +315,11 @@
 		<div class="card w-96 bg-base-300 shadow-none">
 			<div class="card-body">
 				<div class="card-actions justify-end -mt-5 -mr-5">
-					<button class="btn btn-square btn-ghost btn-sm">
+					<button
+						class="btn btn-square btn-ghost btn-sm"
+						on:click={() => handleEditNote(note)}
+						disabled={isEditMode}
+					>
 						<svg
 							xmlns="http://www.w3.org/2000/svg"
 							fill="none"
@@ -263,7 +335,11 @@
 							/>
 						</svg>
 					</button>
-					<button class="btn btn-square btn-ghost btn-sm" on:click={() => removeNote(note.ref)}>
+					<button
+						class="btn btn-square btn-ghost btn-sm"
+						on:click={() => removeNote(note.ref)}
+						disabled={isEditMode}
+					>
 						<svg
 							xmlns="http://www.w3.org/2000/svg"
 							fill="none"
