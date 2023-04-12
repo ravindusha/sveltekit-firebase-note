@@ -123,14 +123,17 @@
 
 		if (!data.title || !data.note) return;
 
+		let liked = false;
+
 		const noteToBeSaved = {
 			...(data as Pick<Note, 'title' | 'note'>),
-			liked: false,
+			liked,
 			authorId: $authStore.user?.uid || ''
 		};
 
 		if (isEditMode && editingDocRef) {
-			await updateNote(noteToBeSaved, editingDocRef);
+			liked = $notesStore.find((n) => n.ref.id === editingDocRef?.id)?.liked || false;
+			await updateNote({ ...noteToBeSaved, liked }, editingDocRef);
 			(event.target as HTMLFormElement).reset();
 			titleText = '';
 			noteText = '';
