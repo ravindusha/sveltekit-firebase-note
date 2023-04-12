@@ -1,17 +1,5 @@
-import type { User } from "firebase/auth";
-import type { DocumentReference } from "firebase/firestore";
+import type { NoteDocument, auth } from "$lib/types";
 import { writable } from "svelte/store";
-
-export type auth = {
-    user: User | null
-}
-
-export type NoteDocument = {
-    title: string;
-    note: string;
-    authorId: string
-    ref: DocumentReference;
-};
 
 export const authStore = writable<auth>({
     user: null
